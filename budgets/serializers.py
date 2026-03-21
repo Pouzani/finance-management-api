@@ -67,25 +67,32 @@ class BudgetSerializer(serializers.ModelSerializer):
             )
         return data
 
+    def _get_metrics(self, obj):
+        """Compute period and spent once per object to avoid repeated queries."""
+        cache_key = '_budget_serializer_metrics'
+        if not hasattr(obj, cache_key):
+            start, end = current_period(obj.start_day)
+            spent = compute_spent(obj, start, end)
+            setattr(obj, cache_key, {'start': start, 'end': end, 'spent': spent})
+        return getattr(obj, cache_key)
+
     def get_period(self, obj):
-        start, end = current_period(obj.start_day)
-        return {'start': start.isoformat(), 'end': end.isoformat()}
+        m = self._get_metrics(obj)
+        return {'start': m['start'].isoformat(), 'end': m['end'].isoformat()}
 
     def get_spent(self, obj):
-        start, end = current_period(obj.start_day)
-        return str(compute_spent(obj, start, end))
+        m = self._get_metrics(obj)
+        return str(m['spent'])
 
     def get_remaining(self, obj):
-        start, end = current_period(obj.start_day)
-        spent = compute_spent(obj, start, end)
-        return str(obj.amount_limit - spent)
+        m = self._get_metrics(obj)
+        return str(obj.amount_limit - m['spent'])
 
     def get_utilization_pct(self, obj):
         if obj.amount_limit <= 0:
             return 0.0
-        start, end = current_period(obj.start_day)
-        spent = compute_spent(obj, start, end)
-        return round(float(spent / obj.amount_limit) * 100, 1)
+        m = self._get_metrics(obj)
+        return round(float(m['spent'] / obj.amount_limit) * 100, 1)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
