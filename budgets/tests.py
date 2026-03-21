@@ -328,3 +328,124 @@ class BudgetCRUDTest(APITestCase):
         res = self.client.get(self.url)
         names = [r['category']['name'] for r in res.json()['results']]
         self.assertEqual(names, sorted(names))
+
+
+class BudgetHistoryTest(APITestCase):
+    def setUp(self):
+        self.account = Account.objects.create(name='CIH Bank')
+        self.category = Category.objects.create(
+            name='Food', color='#ff0000', type='expense'
+        )
+        self.budget = Budget.objects.create(
+            category=self.category,
+            amount_limit=Decimal('3000.00'),
+            start_day=1,
+            rollover=False,
+        )
+        self.url = f'/api/budgets/{self.budget.id}/history/'
+
+    def test_history_default_12_periods(self):
+        res = self.client.get(self.url)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['periods_requested'], 12)
+        self.assertEqual(len(data['history']), 12)
+
+    def test_history_custom_periods(self):
+        res = self.client.get(f'{self.url}?periods=3')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.json()['history']), 3)
+
+    def test_history_periods_too_low(self):
+        res = self.client.get(f'{self.url}?periods=0')
+        self.assertEqual(res.status_code, 400)
+
+    def test_history_periods_too_high(self):
+        res = self.client.get(f'{self.url}?periods=25')
+        self.assertEqual(res.status_code, 400)
+
+    def test_history_ascending_order(self):
+        res = self.client.get(f'{self.url}?periods=3')
+        starts = [p['period']['start'] for p in res.json()['history']]
+        self.assertEqual(starts, sorted(starts))
+
+    def test_history_new_budget_all_zero(self):
+        res = self.client.get(f'{self.url}?periods=3')
+        for record in res.json()['history']:
+            self.assertEqual(record['spent'], '0.00')
+
+    def test_history_rollover_carries_surplus(self):
+        from dateutil.relativedelta import relativedelta as rd
+        budget = Budget.objects.create(
+            category=self.category,
+            account=self.account,
+            amount_limit=Decimal('3000.00'),
+            start_day=1,
+            rollover=True,
+        )
+        # Place a transaction in the oldest of 3 periods relative to today
+        from budgets.utils import last_n_periods
+        from datetime import date as d
+        periods = last_n_periods(1, 3)
+        oldest_start, oldest_end = periods[0]
+        second_start, _ = periods[1]
+        # Put the transaction in the oldest period
+        Transaction.objects.create(
+            label='Groceries', amount=Decimal('-2500.00'),
+            date=oldest_start.replace(day=5), type='expense',
+            account=self.account, category=self.category,
+        )
+
+        res = self.client.get(f'/api/budgets/{budget.id}/history/?periods=3')
+        history = res.json()['history']
+        oldest = history[0]
+        second = history[1]
+        self.assertEqual(oldest['spent'], '2500.00')
+        # surplus from oldest = 3000 - 2500 = 500; second effective_limit = 3000 + 500
+        self.assertEqual(Decimal(second['effective_limit']), Decimal('3500.00'))
+
+    def test_history_rollover_overspend_no_debt(self):
+        """Overspending does not reduce the next period's effective_limit."""
+        from budgets.utils import last_n_periods
+        budget = Budget.objects.create(
+            category=self.category,
+            account=self.account,
+            amount_limit=Decimal('3000.00'),
+            start_day=1,
+            rollover=True,
+        )
+        # Place a transaction that exceeds the limit in the oldest of 3 periods
+        periods = last_n_periods(1, 3)
+        oldest_start, _ = periods[0]
+        Transaction.objects.create(
+            label='Overspend', amount=Decimal('-4000.00'),
+            date=oldest_start.replace(day=5), type='expense',
+            account=self.account, category=self.category,
+        )
+        res = self.client.get(f'/api/budgets/{budget.id}/history/?periods=3')
+        history = res.json()['history']
+        oldest = history[0]
+        second = history[1]
+        # remaining should be negative (overspent)
+        self.assertLess(Decimal(oldest['remaining']), Decimal('0'))
+        # next period effective_limit must NOT be reduced below amount_limit
+        self.assertEqual(Decimal(second['effective_limit']), Decimal('3000.00'))
+
+    def test_history_no_rollover_fresh_each_period(self):
+        # rollover=False: even with surplus, next effective_limit stays at amount_limit
+        res = self.client.get(f'{self.url}?periods=3')
+        for record in res.json()['history']:
+            self.assertEqual(
+                Decimal(record['effective_limit']),
+                self.budget.amount_limit
+            )
+
+    def test_history_response_has_required_fields(self):
+        res = self.client.get(self.url)
+        record = res.json()['history'][0]
+        self.assertIn('period', record)
+        self.assertIn('effective_limit', record)
+        self.assertIn('spent', record)
+        self.assertIn('remaining', record)
+        self.assertIn('start', record['period'])
+        self.assertIn('end', record['period'])
