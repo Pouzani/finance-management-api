@@ -239,3 +239,92 @@ class BudgetValidationTest(APITestCase):
             'amount_limit': '1500.00', 'start_day': 25, 'rollover': False,
         }, format='json')
         self.assertEqual(r2.status_code, 201)
+
+
+class BudgetCRUDTest(APITestCase):
+    def setUp(self):
+        self.account = Account.objects.create(name='CIH Bank')
+        self.category = Category.objects.create(
+            name='Food', color='#ff0000', type='expense'
+        )
+        self.url = '/api/budgets/'
+
+    def _create_budget(self, **kwargs):
+        defaults = {
+            'category': str(self.category.id),
+            'amount_limit': '3000.00',
+            'start_day': 25,
+            'rollover': False,
+        }
+        defaults.update(kwargs)
+        return self.client.post(self.url, defaults, format='json')
+
+    def test_create_budget(self):
+        res = self._create_budget()
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertIn('id', data)
+        self.assertIn('period', data)
+        self.assertIn('spent', data)
+        self.assertIn('remaining', data)
+        self.assertIn('utilization_pct', data)
+        # category is nested on read
+        self.assertIsInstance(data['category'], dict)
+        self.assertEqual(data['category']['name'], 'Food')
+        # account is null for global budget
+        self.assertIsNone(data['account'])
+
+    def test_create_budget_scoped_to_account(self):
+        res = self._create_budget(account=str(self.account.id))
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()['account']['name'], 'CIH Bank')
+
+    def test_list_budgets(self):
+        self._create_budget()
+        res = self.client.get(self.url)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.json()['results']), 1)
+
+    def test_retrieve_budget(self):
+        created = self._create_budget().json()
+        res = self.client.get(f"{self.url}{created['id']}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['id'], created['id'])
+
+    def test_update_budget_put(self):
+        created = self._create_budget().json()
+        res = self.client.put(f"{self.url}{created['id']}/", {
+            'category': str(self.category.id),
+            'amount_limit': '4000.00',
+            'start_day': 1,
+            'rollover': True,
+        }, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['amount_limit'], '4000.00')
+
+    def test_update_budget_patch(self):
+        created = self._create_budget().json()
+        res = self.client.patch(f"{self.url}{created['id']}/", {
+            'rollover': True,
+        }, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()['rollover'])
+
+    def test_delete_budget(self):
+        created = self._create_budget().json()
+        res = self.client.delete(f"{self.url}{created['id']}/")
+        self.assertEqual(res.status_code, 204)
+        self.assertEqual(self.client.get(self.url).json()['count'], 0)
+
+    def test_list_ordering_by_category_name(self):
+        cat_z = Category.objects.create(name='Zara', color='#000', type='expense')
+        cat_a = Category.objects.create(name='Abonnement', color='#111', type='expense')
+        self.client.post(self.url, {
+            'category': str(cat_z.id), 'amount_limit': '100', 'start_day': 1, 'rollover': False
+        }, format='json')
+        self.client.post(self.url, {
+            'category': str(cat_a.id), 'amount_limit': '200', 'start_day': 1, 'rollover': False
+        }, format='json')
+        res = self.client.get(self.url)
+        names = [r['category']['name'] for r in res.json()['results']]
+        self.assertEqual(names, sorted(names))
