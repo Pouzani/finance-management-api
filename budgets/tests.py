@@ -1,7 +1,6 @@
 import uuid
 from decimal import Decimal
 from django.test import TestCase
-from django.core.exceptions import ValidationError
 from accounts.models import Account
 from categories.models import Category
 from budgets.models import Budget
