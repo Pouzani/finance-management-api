@@ -1,4 +1,3 @@
-from decimal import Decimal
 from rest_framework import serializers
 from accounts.models import Account
 from categories.models import Category

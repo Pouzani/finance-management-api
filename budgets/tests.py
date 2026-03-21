@@ -3,7 +3,6 @@ from datetime import date
 from decimal import Decimal
 from django.test import TestCase
 from rest_framework.test import APITestCase
-from django.urls import reverse
 from accounts.models import Account
 from categories.models import Category
 from budgets.models import Budget
@@ -202,10 +201,11 @@ class BudgetValidationTest(APITestCase):
         self.assertEqual(res.status_code, 400)
 
     def test_unique_constraint_global(self):
-        self.client.post(self.url, {
+        r1 = self.client.post(self.url, {
             'category': str(self.expense_cat.id),
             'amount_limit': '3000.00', 'start_day': 25, 'rollover': False,
         }, format='json')
+        self.assertEqual(r1.status_code, 201)
         res = self.client.post(self.url, {
             'category': str(self.expense_cat.id),
             'amount_limit': '2000.00', 'start_day': 1, 'rollover': True,
