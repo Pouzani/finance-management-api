@@ -2,6 +2,8 @@ import uuid
 from datetime import date
 from decimal import Decimal
 from django.test import TestCase
+from rest_framework.test import APITestCase
+from django.urls import reverse
 from accounts.models import Account
 from categories.models import Category
 from budgets.models import Budget
@@ -150,3 +152,90 @@ class ComputeSpentTest(TestCase):
         spent = compute_spent(budget, self.period_start, self.period_end)
         # Bus (50) for other_cat must not be included
         self.assertEqual(spent, Decimal('800.00'))
+
+
+class BudgetValidationTest(APITestCase):
+    def setUp(self):
+        self.account = Account.objects.create(name='CIH Bank')
+        self.expense_cat = Category.objects.create(
+            name='Food', color='#ff0000', type='expense'
+        )
+        self.income_cat = Category.objects.create(
+            name='Salary', color='#00ff00', type='income'
+        )
+        self.url = '/api/budgets/'
+
+    def test_income_category_rejected(self):
+        res = self.client.post(self.url, {
+            'category': str(self.income_cat.id),
+            'amount_limit': '3000.00',
+            'start_day': 25,
+            'rollover': False,
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_amount_limit_zero_rejected(self):
+        res = self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'amount_limit': '0.00',
+            'start_day': 25,
+            'rollover': False,
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_start_day_too_low_rejected(self):
+        res = self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'amount_limit': '3000.00',
+            'start_day': 0,
+            'rollover': False,
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_start_day_too_high_rejected(self):
+        res = self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'amount_limit': '3000.00',
+            'start_day': 29,
+            'rollover': False,
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_unique_constraint_global(self):
+        self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'amount_limit': '3000.00', 'start_day': 25, 'rollover': False,
+        }, format='json')
+        res = self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'amount_limit': '2000.00', 'start_day': 1, 'rollover': True,
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_unique_constraint_per_account(self):
+        self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'account': str(self.account.id),
+            'amount_limit': '3000.00', 'start_day': 25, 'rollover': False,
+        }, format='json')
+        res = self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'account': str(self.account.id),
+            'amount_limit': '2000.00', 'start_day': 1, 'rollover': True,
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_global_and_scoped_coexist(self):
+        # Global budget
+        r1 = self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'amount_limit': '3000.00', 'start_day': 25, 'rollover': False,
+        }, format='json')
+        self.assertEqual(r1.status_code, 201)
+        # Account-scoped budget for same category — should be allowed
+        r2 = self.client.post(self.url, {
+            'category': str(self.expense_cat.id),
+            'account': str(self.account.id),
+            'amount_limit': '1500.00', 'start_day': 25, 'rollover': False,
+        }, format='json')
+        self.assertEqual(r2.status_code, 201)
