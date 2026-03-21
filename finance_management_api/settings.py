@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'transactions',
     'goals',
     'analytics',
+    'budgets',
 
 ]
 
