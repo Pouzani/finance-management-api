@@ -1,6 +1,8 @@
 import uuid
 from decimal import Decimal
 from django.test import TestCase
+from django.contrib.admin.sites import AdminSite
+from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 
@@ -76,3 +78,60 @@ class GoalAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         from goals.models import Goal
         self.assertFalse(Goal.objects.filter(pk=goal.pk).exists())
+
+
+class GoalAdminTest(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username='admin', password='password', email='admin@test.com'
+        )
+        self.client.force_login(self.superuser)
+
+    def _make_goal(self, current='250.00', target='1000.00', color='#3498db'):
+        from goals.models import Goal
+        return Goal.objects.create(
+            label="Emergency Fund",
+            current=Decimal(current),
+            target=Decimal(target),
+            icon="shield",
+            color=color,
+        )
+
+    def test_goal_list_page_loads(self):
+        self._make_goal()
+        response = self.client.get('/admin/goals/goal/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_progress_pct_calculated_correctly(self):
+        from goals.admin import GoalAdmin
+        from goals.models import Goal
+        goal = self._make_goal(current='250.00', target='1000.00')
+        ma = GoalAdmin(model=Goal, admin_site=AdminSite())
+        self.assertEqual(ma.progress_pct(goal), '25.0%')
+
+    def test_progress_pct_zero_when_target_is_zero(self):
+        from goals.admin import GoalAdmin
+        from goals.models import Goal
+        ma = GoalAdmin(model=Goal, admin_site=AdminSite())
+        # Use an unsaved in-memory instance to test the zero-division guard
+        goal = Goal(label="Zero Target", current=Decimal("0"), target=Decimal("0"), icon="x", color="#fff")
+        result = ma.progress_pct(goal)
+        self.assertEqual(result, '0%')
+
+    def test_color_preview_sanitizes_invalid_color(self):
+        from goals.admin import GoalAdmin
+        from goals.models import Goal
+        goal = self._make_goal(color='"><script>xss</script>')
+        ma = GoalAdmin(model=Goal, admin_site=AdminSite())
+        result = str(ma.color_preview(goal))
+        self.assertNotIn('<script>', result)
+        self.assertIn('#cccccc', result)
+
+    def test_color_preview_renders_valid_color(self):
+        from goals.admin import GoalAdmin
+        from goals.models import Goal
+        goal = self._make_goal(color='#3498db')
+        ma = GoalAdmin(model=Goal, admin_site=AdminSite())
+        result = str(ma.color_preview(goal))
+        self.assertIn('#3498db', result)
+        self.assertIn('<span', result)
