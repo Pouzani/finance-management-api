@@ -92,3 +92,66 @@ class AccountAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         from accounts.models import Account
         self.assertFalse(Account.objects.filter(pk=account.pk).exists())
+
+
+from django.contrib.admin.sites import AdminSite
+from django.contrib.auth.models import User
+
+
+class AccountAdminTest(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username='admin', password='password', email='admin@test.com'
+        )
+        self.client.force_login(self.superuser)
+
+    def _make_account_with_transactions(self):
+        from accounts.models import Account
+        from categories.models import Category
+        from transactions.models import Transaction
+        from decimal import Decimal
+        account = Account.objects.create(name="CIH")
+        cat = Category.objects.create(name="Salaire", color="#00FF00", type="income")
+        Transaction.objects.create(
+            label="Salary", amount=Decimal("5000.00"),
+            date="2024-01-15", type="income", account=account, category=cat
+        )
+        Transaction.objects.create(
+            label="Rent", amount=Decimal("-1500.00"),
+            date="2024-01-16", type="expense", account=account, category=cat
+        )
+        return account
+
+    def test_account_list_page_loads(self):
+        self._make_account_with_transactions()
+        response = self.client.get('/admin/accounts/account/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_account_change_page_loads(self):
+        account = self._make_account_with_transactions()
+        response = self.client.get(f'/admin/accounts/account/{account.pk}/change/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_balance_display_method(self):
+        from accounts.admin import AccountAdmin
+        from decimal import Decimal
+        account = self._make_account_with_transactions()
+        ma = AccountAdmin(model=account.__class__, admin_site=AdminSite())
+        # get_queryset annotates balance — call it via the list view
+        from django.test import RequestFactory
+        request = RequestFactory().get('/admin/accounts/account/')
+        request.user = self.superuser
+        qs = ma.get_queryset(request)
+        annotated = qs.get(pk=account.pk)
+        self.assertEqual(ma.balance(annotated), Decimal("3500.00"))
+
+    def test_transaction_count_display_method(self):
+        from accounts.admin import AccountAdmin
+        from django.test import RequestFactory
+        account = self._make_account_with_transactions()
+        ma = AccountAdmin(model=account.__class__, admin_site=AdminSite())
+        request = RequestFactory().get('/admin/accounts/account/')
+        request.user = self.superuser
+        qs = ma.get_queryset(request)
+        annotated = qs.get(pk=account.pk)
+        self.assertEqual(ma.transaction_count(annotated), 2)
