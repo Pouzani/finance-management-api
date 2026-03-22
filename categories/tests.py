@@ -1,7 +1,14 @@
 import uuid
-from django.test import TestCase
+from decimal import Decimal
+from django.contrib.admin.sites import AdminSite
+from django.contrib.auth.models import User
+from django.test import RequestFactory, TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
+from categories.models import Category
+from accounts.models import Account
+from transactions.models import Transaction
+from categories.admin import CategoryAdmin
 
 
 class CategoryModelTest(TestCase):
@@ -53,3 +60,48 @@ class CategoryAPITest(TestCase):
     def test_create_category_requires_fields(self):
         response = self.client.post(self.url, {}, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class CategoryAdminTest(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username='admin', password='password', email='admin@test.com'
+        )
+        self.client.force_login(self.superuser)
+
+    def _make_category_with_transactions(self):
+        cat = Category.objects.create(name="Alimentation", color="#FF5733", type="expense")
+        account = Account.objects.create(name="CIH")
+        Transaction.objects.create(
+            label="Groceries", amount=Decimal("-200.00"),
+            date="2024-01-15", type="expense", account=account, category=cat
+        )
+        return cat
+
+    def test_category_list_page_loads(self):
+        self._make_category_with_transactions()
+        response = self.client.get('/admin/categories/category/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_color_preview_renders_span(self):
+        cat = Category.objects.create(name="Test", color="#FF5733", type="expense")
+        ma = CategoryAdmin(model=Category, admin_site=AdminSite())
+        result = str(ma.color_preview(cat))
+        self.assertIn('#FF5733', result)
+        self.assertIn('<span', result)
+
+    def test_color_preview_sanitizes_invalid_color(self):
+        cat = Category.objects.create(name="Bad", color='"><script>alert(1)</script>', type="expense")
+        ma = CategoryAdmin(model=Category, admin_site=AdminSite())
+        result = str(ma.color_preview(cat))
+        self.assertNotIn('<script>', result)
+        self.assertIn('#cccccc', result)
+
+    def test_transaction_count_method(self):
+        cat = self._make_category_with_transactions()
+        ma = CategoryAdmin(model=cat.__class__, admin_site=AdminSite())
+        request = RequestFactory().get('/admin/categories/category/')
+        request.user = self.superuser
+        qs = ma.get_queryset(request)
+        annotated = qs.get(pk=cat.pk)
+        self.assertEqual(ma.transaction_count(annotated), 1)
