@@ -449,3 +449,49 @@ class BudgetHistoryTest(APITestCase):
         self.assertIn('remaining', record)
         self.assertIn('start', record['period'])
         self.assertIn('end', record['period'])
+
+
+from django.contrib.admin.sites import AdminSite
+from django.contrib.auth.models import User
+
+
+class BudgetAdminTest(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username='admin', password='password', email='admin@test.com'
+        )
+        self.client.force_login(self.superuser)
+
+    def _make_budget(self, with_account=False):
+        from budgets.models import Budget
+        from categories.models import Category
+        from accounts.models import Account
+        from decimal import Decimal
+        cat = Category.objects.create(name="Alimentation", color="#FF5733", type="expense")
+        account = Account.objects.create(name="CIH") if with_account else None
+        return Budget.objects.create(
+            category=cat,
+            account=account,
+            amount_limit=Decimal("500.00"),
+            start_day=1,
+            rollover=False,
+        )
+
+    def test_budget_list_page_loads(self):
+        self._make_budget()
+        response = self.client.get('/admin/budgets/budget/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_account_display_shows_global_when_no_account(self):
+        from budgets.admin import BudgetAdmin
+        from budgets.models import Budget
+        budget = self._make_budget(with_account=False)
+        ma = BudgetAdmin(model=Budget, admin_site=AdminSite())
+        self.assertEqual(ma.account_display(budget), 'global')
+
+    def test_account_display_shows_account_name(self):
+        from budgets.admin import BudgetAdmin
+        from budgets.models import Budget
+        budget = self._make_budget(with_account=True)
+        ma = BudgetAdmin(model=Budget, admin_site=AdminSite())
+        self.assertEqual(ma.account_display(budget), 'CIH')
