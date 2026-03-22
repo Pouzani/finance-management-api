@@ -14,6 +14,12 @@ class TransactionInline(admin.TabularInline):
     readonly_fields = ('label', 'amount', 'type', 'category', 'date')
     ordering = ('-date',)
 
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
     # Note: Django's inline get_queryset() receives no reference to the parent object,
     # so limiting to "last 10" per-account is not possible without a complex subquery.
     # All transactions for the account are shown, ordered most-recent first.
