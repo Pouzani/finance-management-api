@@ -1,6 +1,8 @@
 import uuid
 from decimal import Decimal
 from django.test import TestCase
+from django.contrib.admin.sites import AdminSite
+from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 
@@ -163,3 +165,50 @@ class TransactionAPITest(TestCase):
         response = self.client.get(self.url, {'ordering': 'amount'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['results'][0]['label'], 'Big')
+
+
+class TransactionAdminTest(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username='admin', password='password', email='admin@test.com'
+        )
+        self.client.force_login(self.superuser)
+
+    def _make_transaction(self):
+        from accounts.models import Account
+        from categories.models import Category
+        from transactions.models import Transaction
+        account = Account.objects.create(name="CIH")
+        cat = Category.objects.create(name="Salaire", color="#00FF00", type="income")
+        return Transaction.objects.create(
+            label="Salary", amount=Decimal("5000.00"),
+            date="2024-01-15", type="income", account=account, category=cat
+        )
+
+    def test_transaction_list_page_loads(self):
+        self._make_transaction()
+        response = self.client.get('/admin/transactions/transaction/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_transaction_change_page_loads(self):
+        tx = self._make_transaction()
+        response = self.client.get(f'/admin/transactions/transaction/{tx.pk}/change/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_list_filter_includes_type_and_fk_filters(self):
+        from transactions.admin import TransactionAdmin
+        from transactions.models import Transaction
+        ma = TransactionAdmin(model=Transaction, admin_site=AdminSite())
+        filter_fields = [
+            f if isinstance(f, str) else f[0]
+            for f in ma.list_filter
+        ]
+        self.assertIn('type', filter_fields)
+        self.assertIn('category', filter_fields)
+        self.assertIn('account', filter_fields)
+
+    def test_date_hierarchy_set(self):
+        from transactions.admin import TransactionAdmin
+        from transactions.models import Transaction
+        ma = TransactionAdmin(model=Transaction, admin_site=AdminSite())
+        self.assertEqual(ma.date_hierarchy, 'date')
