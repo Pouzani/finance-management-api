@@ -9,27 +9,39 @@ from rest_framework import status
 from accounts.admin import AccountAdmin
 
 
+def make_user(username='testuser'):
+    return User.objects.create_user(username=username, password='testpass123')
+
+
 class AccountModelTest(TestCase):
+    def setUp(self):
+        self.user = make_user()
+
     def test_account_has_uuid_pk(self):
         from accounts.models import Account
-        account = Account.objects.create(name="CIH Principale")
+        account = Account.objects.create(name="CIH Principale", user=self.user)
         self.assertIsInstance(account.id, uuid.UUID)
 
     def test_account_str(self):
         from accounts.models import Account
-        account = Account.objects.create(name="Wafacash")
+        account = Account.objects.create(name="Wafacash", user=self.user)
         self.assertEqual(str(account), "Wafacash")
 
     def test_account_created_at_set(self):
         from accounts.models import Account
-        account = Account.objects.create(name="Attijari")
+        account = Account.objects.create(name="Attijari", user=self.user)
         self.assertIsNotNone(account.created_at)
+
+    def test_account_has_user_field(self):
+        from accounts.models import Account
+        account = Account.objects.create(name='Test', user=self.user)
+        self.assertEqual(account.user, self.user)
 
     def test_balance_zero_with_no_transactions(self):
         from accounts.models import Account
         from django.db.models import Sum, Value, DecimalField
         from django.db.models.functions import Coalesce
-        account = Account.objects.create(name="Empty Account")
+        account = Account.objects.create(name="Empty Account", user=self.user)
         annotated = Account.objects.annotate(
             balance=Coalesce(Sum('transactions__amount'), Value(0), output_field=DecimalField())
         ).get(pk=account.pk)
@@ -41,7 +53,7 @@ class AccountModelTest(TestCase):
         from transactions.models import Transaction
         from django.db.models import Sum, Value, DecimalField
         from django.db.models.functions import Coalesce
-        account = Account.objects.create(name="CIH")
+        account = Account.objects.create(name="CIH", user=self.user)
         category = Category.objects.create(name="Salaire", color="#00FF00", type="income")
         Transaction.objects.create(
             label="Salary", amount=Decimal("5000.00"),
@@ -60,11 +72,18 @@ class AccountModelTest(TestCase):
 class AccountAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.user = make_user()
+        self.client.force_authenticate(user=self.user)
         self.url = '/api/accounts/'
 
-    def _make_account(self, name="CIH"):
+    def _make_account(self, name="CIH", user=None):
         from accounts.models import Account
-        return Account.objects.create(name=name)
+        return Account.objects.create(name=name, user=user or self.user)
+
+    def test_unauthenticated_request_returns_401(self):
+        unauth_client = APIClient()
+        response = unauth_client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_list_accounts(self):
         self._make_account("CIH")
@@ -73,11 +92,26 @@ class AccountAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['count'], 2)
 
+    def test_user_only_sees_own_accounts(self):
+        other_user = make_user('other')
+        self._make_account("My Account")
+        self._make_account("Other Account", user=other_user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['name'], 'My Account')
+
     def test_create_account(self):
         response = self.client.post(self.url, {'name': 'CIH Principale'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['name'], 'CIH Principale')
         self.assertIn('balance', response.data)
+
+    def test_create_account_assigns_current_user(self):
+        from accounts.models import Account
+        self.client.post(self.url, {'name': 'New Account'}, format='json')
+        account = Account.objects.get(name='New Account')
+        self.assertEqual(account.user, self.user)
 
     def test_create_account_requires_name(self):
         response = self.client.post(self.url, {}, format='json')
@@ -90,12 +124,24 @@ class AccountAPITest(TestCase):
         account.refresh_from_db()
         self.assertEqual(account.name, 'New Name')
 
+    def test_cannot_update_other_users_account(self):
+        other_user = make_user('other')
+        account = self._make_account("Other Account", user=other_user)
+        response = self.client.put(f'/api/accounts/{account.pk}/', {'name': 'Hacked'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_delete_account(self):
         account = self._make_account("To Delete")
         response = self.client.delete(f'/api/accounts/{account.pk}/')
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         from accounts.models import Account
         self.assertFalse(Account.objects.filter(pk=account.pk).exists())
+
+    def test_cannot_delete_other_users_account(self):
+        other_user = make_user('other')
+        account = self._make_account("Other", user=other_user)
+        response = self.client.delete(f'/api/accounts/{account.pk}/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
 class AccountAdminTest(TestCase):
@@ -109,7 +155,7 @@ class AccountAdminTest(TestCase):
         from accounts.models import Account
         from categories.models import Category
         from transactions.models import Transaction
-        account = Account.objects.create(name="CIH")
+        account = Account.objects.create(name="CIH", user=self.superuser)
         cat = Category.objects.create(name="Salaire", color="#00FF00", type="income")
         Transaction.objects.create(
             label="Salary", amount=Decimal("5000.00"),
@@ -134,7 +180,6 @@ class AccountAdminTest(TestCase):
     def test_balance_display_method(self):
         account = self._make_account_with_transactions()
         ma = AccountAdmin(model=account.__class__, admin_site=AdminSite())
-        # get_queryset annotates balance — call it via the list view
         request = RequestFactory().get('/admin/accounts/account/')
         request.user = self.superuser
         qs = ma.get_queryset(request)

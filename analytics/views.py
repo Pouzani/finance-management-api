@@ -10,6 +10,7 @@ class MonthlyFlowView(APIView):
     def get(self, request):
         qs = (
             Transaction.objects
+            .filter(account__user=request.user)
             .annotate(month=TruncMonth('date'))
             .values('month', 'type')
             .annotate(total=Coalesce(Sum('amount'), Value(0), output_field=DecimalField()))
@@ -34,7 +35,7 @@ class CategorySplitView(APIView):
     def get(self, request):
         qs = (
             Transaction.objects
-            .filter(type='expense')
+            .filter(account__user=request.user, type='expense')
             .values('category__name', 'category__color')
             .annotate(total=Coalesce(Sum('amount'), Value(0), output_field=DecimalField()))
             .order_by('category__name')

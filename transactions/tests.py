@@ -7,9 +7,13 @@ from rest_framework.test import APIClient
 from rest_framework import status
 
 
-def make_account(name="CIH"):
+def make_user(username='testuser'):
+    return User.objects.create_user(username=username, password='testpass123')
+
+
+def make_account(user, name="CIH"):
     from accounts.models import Account
-    return Account.objects.create(name=name)
+    return Account.objects.create(name=name, user=user)
 
 
 def make_category(name="Logement", type="expense"):
@@ -19,7 +23,8 @@ def make_category(name="Logement", type="expense"):
 
 class TransactionModelTest(TestCase):
     def setUp(self):
-        self.account = make_account()
+        self.user = make_user()
+        self.account = make_account(self.user)
         self.category = make_category()
 
     def test_transaction_has_uuid_pk(self):
@@ -67,8 +72,10 @@ class TransactionModelTest(TestCase):
 class TransactionAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.user = make_user()
+        self.client.force_authenticate(user=self.user)
         self.url = '/api/transactions/'
-        self.account = make_account()
+        self.account = make_account(self.user)
         self.category = make_category()
 
     def _transaction_payload(self, **overrides):
@@ -92,12 +99,34 @@ class TransactionAPITest(TestCase):
         defaults.update(kwargs)
         return Transaction.objects.create(**defaults)
 
+    def test_unauthenticated_request_returns_401(self):
+        unauth_client = APIClient()
+        response = unauth_client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
     def test_list_transactions(self):
         self._create_transaction(label="T1")
         self._create_transaction(label="T2")
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['count'], 2)
+
+    def test_user_only_sees_own_transactions(self):
+        other_user = make_user('other')
+        other_account = make_account(other_user, "Other Bank")
+        from transactions.models import Transaction
+        Transaction.objects.create(
+            label="My T", amount=Decimal("-100"), date="2024-01-15",
+            type="expense", account=self.account, category=self.category
+        )
+        Transaction.objects.create(
+            label="Other T", amount=Decimal("-200"), date="2024-01-15",
+            type="expense", account=other_account, category=self.category
+        )
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['label'], 'My T')
 
     def test_create_transaction(self):
         response = self.client.post(self.url, self._transaction_payload(), format='json')
@@ -107,12 +136,10 @@ class TransactionAPITest(TestCase):
         self.assertIn('account_name', response.data)
 
     def test_create_transaction_validates_type_amount_consistency(self):
-        # expense with positive amount should fail
         payload = self._transaction_payload(type='expense', amount='1500.00')
         response = self.client.post(self.url, payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-        # income with negative amount should fail
         payload2 = self._transaction_payload(type='income', amount='-500.00')
         response2 = self.client.post(self.url, payload2, format='json')
         self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
@@ -131,6 +158,21 @@ class TransactionAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         t.refresh_from_db()
         self.assertEqual(t.label, 'Updated')
+
+    def test_cannot_update_other_users_transaction(self):
+        other_user = make_user('other')
+        other_account = make_account(other_user, "Other Bank")
+        from transactions.models import Transaction
+        other_t = Transaction.objects.create(
+            label="Other", amount=Decimal("-100"), date="2024-01-15",
+            type="expense", account=other_account, category=self.category
+        )
+        response = self.client.put(
+            f'/api/transactions/{other_t.pk}/',
+            self._transaction_payload(label='Hacked'),
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_delete_transaction(self):
         t = self._create_transaction()
@@ -166,6 +208,13 @@ class TransactionAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['results'][0]['label'], 'Big')
 
+    def test_cannot_create_transaction_with_other_users_account(self):
+        other_user = make_user('other')
+        other_account = make_account(other_user, "Other Bank")
+        payload = self._transaction_payload(account=str(other_account.pk))
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class TransactionAdminTest(TestCase):
     def setUp(self):
@@ -178,7 +227,7 @@ class TransactionAdminTest(TestCase):
         from accounts.models import Account
         from categories.models import Category
         from transactions.models import Transaction
-        account = Account.objects.create(name="CIH")
+        account = Account.objects.create(name="CIH", user=self.superuser)
         cat = Category.objects.create(name="Salaire", color="#00FF00", type="income")
         return Transaction.objects.create(
             label="Salary", amount=Decimal("5000.00"),

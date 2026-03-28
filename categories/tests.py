@@ -34,6 +34,8 @@ class CategoryAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.url = '/api/categories/'
+        self.user = User.objects.create_user(username='testuser', password='password')
+        self.client.force_authenticate(user=self.user)
 
     def _make_category(self, name="Logement", type="expense"):
         from categories.models import Category
@@ -71,7 +73,7 @@ class CategoryAdminTest(TestCase):
 
     def _make_category_with_transactions(self):
         cat = Category.objects.create(name="Alimentation", color="#FF5733", type="expense")
-        account = Account.objects.create(name="CIH")
+        account = Account.objects.create(name="CIH", user=self.superuser)
         Transaction.objects.create(
             label="Groceries", amount=Decimal("-200.00"),
             date="2024-01-15", type="expense", account=account, category=cat

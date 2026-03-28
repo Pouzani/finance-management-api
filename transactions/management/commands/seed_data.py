@@ -1,5 +1,6 @@
 from decimal import Decimal
-from django.core.management.base import BaseCommand
+from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as db_transaction
 from accounts.models import Account
 from categories.models import Category
@@ -35,7 +36,6 @@ GOALS = [
 ]
 
 TRANSACTIONS_TEMPLATE = [
-    # January 2024
     {"label": "Salaire Janvier", "amount": Decimal("8500"), "date": "2024-01-05", "type": "income", "account": "CIH Principale", "category": "Salaire"},
     {"label": "Loyer Janvier", "amount": Decimal("-3200"), "date": "2024-01-07", "type": "expense", "account": "CIH Principale", "category": "Logement"},
     {"label": "Courses Carrefour", "amount": Decimal("-650"), "date": "2024-01-10", "type": "expense", "account": "Cash", "category": "Alimentation"},
@@ -44,7 +44,6 @@ TRANSACTIONS_TEMPLATE = [
     {"label": "Mission freelance", "amount": Decimal("2000"), "date": "2024-01-20", "type": "income", "account": "Wafacash", "category": "Freelance"},
     {"label": "Pharmacie", "amount": Decimal("-220"), "date": "2024-01-22", "type": "expense", "account": "Cash", "category": "Santé"},
     {"label": "Netflix + Spotify", "amount": Decimal("-95"), "date": "2024-01-25", "type": "expense", "account": "CIH Principale", "category": "Abonnements"},
-    # February 2024
     {"label": "Salaire Février", "amount": Decimal("8500"), "date": "2024-02-05", "type": "income", "account": "CIH Principale", "category": "Salaire"},
     {"label": "Loyer Février", "amount": Decimal("-3200"), "date": "2024-02-07", "type": "expense", "account": "CIH Principale", "category": "Logement"},
     {"label": "Restaurant La Maison", "amount": Decimal("-350"), "date": "2024-02-14", "type": "expense", "account": "CIH Principale", "category": "Loisirs"},
@@ -52,7 +51,6 @@ TRANSACTIONS_TEMPLATE = [
     {"label": "Bus CTM", "amount": Decimal("-150"), "date": "2024-02-18", "type": "expense", "account": "Cash", "category": "Transport"},
     {"label": "Cours en ligne Udemy", "amount": Decimal("-200"), "date": "2024-02-20", "type": "expense", "account": "CIH Principale", "category": "Éducation"},
     {"label": "Remboursement ami", "amount": Decimal("500"), "date": "2024-02-22", "type": "income", "account": "Wafacash", "category": "Remboursement"},
-    # March 2024
     {"label": "Salaire Mars", "amount": Decimal("8500"), "date": "2024-03-05", "type": "income", "account": "CIH Principale", "category": "Salaire"},
     {"label": "Loyer Mars", "amount": Decimal("-3200"), "date": "2024-03-07", "type": "expense", "account": "CIH Principale", "category": "Logement"},
     {"label": "Courses Atacadão", "amount": Decimal("-720"), "date": "2024-03-10", "type": "expense", "account": "Cash", "category": "Alimentation"},
@@ -65,25 +63,43 @@ TRANSACTIONS_TEMPLATE = [
 
 
 class Command(BaseCommand):
-    help = 'Seed the database with initial finance data (idempotent — clears first)'
+    help = 'Seed the database with initial finance data for a specific user (idempotent — clears first)'
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--user',
+            required=True,
+            help='Username of the user to seed data for (must already exist)',
+        )
 
     @db_transaction.atomic
     def handle(self, *args, **options):
+        User = get_user_model()
+        username = options['user']
+        try:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            raise CommandError(f"User '{username}' does not exist. Create it first with createsuperuser.")
+
+        self.stdout.write(f'Seeding data for user: {username}')
         self.stdout.write('Clearing existing data...')
-        Transaction.objects.all().delete()
-        Goal.objects.all().delete()
+        Transaction.objects.filter(account__user=user).delete()
+        Goal.objects.filter(user=user).delete()
+        Account.objects.filter(user=user).delete()
         Category.objects.all().delete()
-        Account.objects.all().delete()
 
         self.stdout.write('Creating accounts...')
-        accounts = {a['name']: Account.objects.create(**a) for a in ACCOUNTS}
+        accounts = {
+            a['name']: Account.objects.create(name=a['name'], user=user)
+            for a in ACCOUNTS
+        }
 
         self.stdout.write('Creating categories...')
         categories = {c['name']: Category.objects.create(**c) for c in CATEGORIES}
 
         self.stdout.write('Creating goals...')
         for g in GOALS:
-            Goal.objects.create(**g)
+            Goal.objects.create(**g, user=user)
 
         self.stdout.write('Creating transactions...')
         for t in TRANSACTIONS_TEMPLATE:
@@ -97,9 +113,9 @@ class Command(BaseCommand):
             )
 
         self.stdout.write(self.style.SUCCESS(
-            f'\nSeed complete:\n'
-            f'  {Account.objects.count()} accounts\n'
+            f'\nSeed complete for {username}:\n'
+            f'  {Account.objects.filter(user=user).count()} accounts\n'
             f'  {Category.objects.count()} categories\n'
-            f'  {Goal.objects.count()} goals\n'
-            f'  {Transaction.objects.count()} transactions'
+            f'  {Goal.objects.filter(user=user).count()} goals\n'
+            f'  {Transaction.objects.filter(account__user=user).count()} transactions'
         ))
