@@ -62,6 +62,17 @@ Copy `.env.example` to `.env` and fill in values before running.
 
 Base path: `/api/`
 
+All endpoints (except auth) require a JWT Bearer token: `Authorization: Bearer <access_token>`
+
+### Authentication — `/api/auth/`
+| Method | Path | Auth required | Description |
+|--------|------|---------------|-------------|
+| POST | `/api/auth/register/` | No | Register; returns `access` + `refresh` tokens |
+| POST | `/api/auth/login/` | No | Login; returns `access` + `refresh` tokens |
+| POST | `/api/auth/token/refresh/` | No | Exchange `refresh` for a new `access` token |
+| GET | `/api/auth/me/` | Yes | Retrieve current user profile |
+| PATCH | `/api/auth/me/` | Yes | Update current user profile |
+
 ### Accounts — `/api/accounts/`
 | Method | Path | Description |
 |--------|------|-------------|
@@ -120,6 +131,7 @@ Base path: `/api/`
 
 ```
 finance_management_api/   ← Django config package (settings, urls, wsgi)
+authentication/           ← JWT auth: register, login, token refresh, me
 accounts/                 ← Account model, serializer, viewset, tests
 categories/               ← Category model, serializer, viewset, tests
 transactions/             ← Transaction model, serializer, viewset, filter, tests
