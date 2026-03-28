@@ -72,6 +72,7 @@ def compute_spent(budget, period_start: date, period_end: date) -> Decimal:
         type='expense',
         category=budget.category,
         date__range=(period_start, period_end),
+        account__user=budget.user,
     )
     if budget.account is not None:
         qs = qs.filter(account=budget.account)

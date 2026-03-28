@@ -1,5 +1,5 @@
 from decimal import Decimal
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as db_transaction
 from accounts.models import Account
@@ -74,6 +74,7 @@ class Command(BaseCommand):
 
     @db_transaction.atomic
     def handle(self, *args, **options):
+        User = get_user_model()
         username = options['user']
         try:
             user = User.objects.get(username=username)

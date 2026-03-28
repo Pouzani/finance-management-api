@@ -208,6 +208,13 @@ class TransactionAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['results'][0]['label'], 'Big')
 
+    def test_cannot_create_transaction_with_other_users_account(self):
+        other_user = make_user('other')
+        other_account = make_account(other_user, "Other Bank")
+        payload = self._transaction_payload(account=str(other_account.pk))
+        response = self.client.post(self.url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class TransactionAdminTest(TestCase):
     def setUp(self):

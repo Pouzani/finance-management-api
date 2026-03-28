@@ -138,6 +138,17 @@ class ComputeSpentTest(TestCase):
         spent = compute_spent(budget, self.period_start, self.period_end)
         self.assertEqual(spent, Decimal('800.00'))
 
+    def test_spent_global_excludes_other_users_transactions(self):
+        other_user = make_user('other')
+        other_account = Account.objects.create(name='Other Bank', user=other_user)
+        Transaction.objects.create(
+            label='Other groceries', amount=Decimal('-999.00'), date=date(2026, 3, 3),
+            type='expense', account=other_account, category=self.food_cat
+        )
+        budget = self._make_budget(account=None)
+        spent = compute_spent(budget, self.period_start, self.period_end)
+        self.assertEqual(spent, Decimal('800.00'))
+
 
 class BudgetValidationTest(APITestCase):
     def setUp(self):

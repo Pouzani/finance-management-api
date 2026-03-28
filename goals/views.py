@@ -5,5 +5,7 @@ from goals.serializers import GoalSerializer
 
 
 class GoalViewSet(UserOwnedMixin, ModelViewSet):
-    queryset = Goal.objects.all()
     serializer_class = GoalSerializer
+
+    def get_queryset(self):
+        return Goal.objects.filter(user=self.request.user)

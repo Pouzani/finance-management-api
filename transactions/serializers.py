@@ -2,6 +2,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from transactions.models import Transaction
 from categories.serializers import CategorySerializer
+from accounts.models import Account
 
 
 class TransactionSerializer(serializers.ModelSerializer):
@@ -17,6 +18,13 @@ class TransactionSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'account_name', 'category_detail']
+
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            fields['account'].queryset = Account.objects.filter(user=request.user)
+        return fields
 
     def validate(self, data):
         amount = data.get('amount')
