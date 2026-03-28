@@ -6,18 +6,16 @@ from budgets.utils import current_period, compute_spent
 
 
 class BudgetSerializer(serializers.ModelSerializer):
-    # Write: accept UUID; Read: overridden in to_representation
     category = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.filter(type='expense')
     )
     account = serializers.PrimaryKeyRelatedField(
-        queryset=Account.objects.all(),
+        queryset=Account.objects.none(),
         required=False,
         allow_null=True,
         default=None,
     )
 
-    # Computed read-only fields
     period = serializers.SerializerMethodField()
     spent = serializers.SerializerMethodField()
     remaining = serializers.SerializerMethodField()
@@ -31,6 +29,13 @@ class BudgetSerializer(serializers.ModelSerializer):
             'period', 'spent', 'remaining', 'utilization_pct',
         ]
         read_only_fields = ['id', 'period', 'spent', 'remaining', 'utilization_pct']
+
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            fields['account'].queryset = Account.objects.filter(user=request.user)
+        return fields
 
     def validate_category(self, value):
         if value.type != 'expense':
@@ -50,13 +55,12 @@ class BudgetSerializer(serializers.ModelSerializer):
         category = data.get('category', getattr(self.instance, 'category', None))
         account = data.get('account', getattr(self.instance, 'account', None))
         instance_id = self.instance.id if self.instance else None
+        user = self.context['request'].user
 
-        # Use account__isnull for the global case — PostgreSQL treats NULL != NULL,
-        # so `filter(account=None)` would silently match nothing on Postgres.
         if account is None:
-            qs = Budget.objects.filter(category=category, account__isnull=True)
+            qs = Budget.objects.filter(user=user, category=category, account__isnull=True)
         else:
-            qs = Budget.objects.filter(category=category, account=account)
+            qs = Budget.objects.filter(user=user, category=category, account=account)
         if instance_id:
             qs = qs.exclude(id=instance_id)
         if qs.exists():
@@ -67,7 +71,6 @@ class BudgetSerializer(serializers.ModelSerializer):
         return data
 
     def _get_metrics(self, obj):
-        """Compute period and spent once per object to avoid repeated queries."""
         cache_key = '_budget_serializer_metrics'
         if not hasattr(obj, cache_key):
             start, end = current_period(obj.start_day)
@@ -95,7 +98,6 @@ class BudgetSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # Replace FK PKs with nested objects on read
         data['category'] = {
             'id': str(instance.category.id),
             'name': instance.category.name,

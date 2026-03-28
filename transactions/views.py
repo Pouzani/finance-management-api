@@ -24,4 +24,8 @@ class TransactionViewSet(ModelViewSet):
     ordering = ['-date']
 
     def get_queryset(self):
-        return Transaction.objects.select_related('account', 'category').all()
+        return (
+            Transaction.objects
+            .filter(account__user=self.request.user)
+            .select_related('account', 'category')
+        )

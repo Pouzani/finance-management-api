@@ -3,16 +3,17 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+from core.mixins import UserOwnedMixin
 from budgets.models import Budget
 from budgets.serializers import BudgetSerializer
 from budgets.utils import last_n_periods, compute_spent
 
 
-class BudgetViewSet(ModelViewSet):
+class BudgetViewSet(UserOwnedMixin, ModelViewSet):
     serializer_class = BudgetSerializer
 
     def get_queryset(self):
-        return Budget.objects.select_related('category', 'account').all()
+        return Budget.objects.filter(user=self.request.user).select_related('category', 'account')
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
