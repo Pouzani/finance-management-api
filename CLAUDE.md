@@ -49,6 +49,7 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `SECRET_KEY` | Yes | Django secret key | any long random string |
 | `DEBUG` | No | Enable debug mode (default: `True`) | `True` / `False` |
 | `ALLOWED_HOSTS` | No | Comma-separated allowed hosts (default: `localhost,127.0.0.1`) | `myapp.com,www.myapp.com` |
+| `CORS_ALLOWED_ORIGINS` | Yes | Comma-separated allowed CORS origins | `http://localhost:3000,https://myapp.com` |
 | `DB_HOST` | No | Supabase PostgreSQL host — if unset, SQLite is used | `db.xxxx.supabase.co` |
 | `DB_ENGINE` | No | Database engine (default: `django.db.backends.postgresql`) | — |
 | `DB_NAME` | No | Database name (default: `postgres`) | `postgres` |
